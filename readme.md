@@ -1,129 +1,80 @@
+# Agentic RAG using LangGraph
 
-# 🧠 Agentic RAG — Automated Retrieval-Augmented Generation using LangGraph
+A small Retrieval-Augmented Generation (RAG) agent built with [LangGraph](https://langchain-ai.github.io/langgraph/). It indexes a folder of PDFs into a local [Chroma](https://www.trychroma.com/) vector store, then answers questions about them — but first checks whether the question is even relevant to the indexed documents and short-circuits if it isn't.
 
-This project implements an **Agentic Retrieval-Augmented Generation (RAG)** pipeline using **LangGraph**, **LangChain**, **ChromaDB**, and **OpenAI APIs**.
-It automates document retrieval, relevance checking, and response generation through a dynamic graph of reasoning nodes.
+## How it works
 
----
-
-## 🚀 Overview
-
-The system works as an **intelligent document question-answering agent**.
-It indexes local PDF documents, determines whether a query is relevant to the dataset, retrieves matching text chunks from a vector database, and generates an LLM-based answer.
-
-The workflow is built using a **graph-based architecture** (via `StateGraph` from `langgraph`), with nodes representing distinct steps in the RAG pipeline.
-
----
-
-## ⚙️ Workflow Summary
-
-### 1. **Index Creation**
-
-* The function `indexMaker()` loads all PDFs from the `docs/` directory.
-* Each document is split into smaller text chunks using `RecursiveCharacterTextSplitter`.
-* Embeddings are generated via the **HuggingFace model** `sentence-transformers/all-MiniLM-L6-v2`.
-* The chunks are stored in a persistent **ChromaDB** collection.
-
-### 2. **Graph Nodes**
-
-The graph includes the following key nodes:
-
-| Node             | Function            | Description                                                        |
-| ---------------- | ------------------- | ------------------------------------------------------------------ |
-| `relevancyCheck` | LLM-based filter    | Determines if a user query relates to available documents.         |
-| `ChunkRetrieval` | Vector store search | Retrieves the most relevant text chunks using semantic similarity. |
-| `chatbot`        | LLM response        | Generates a contextual answer based on retrieved chunks.           |
-| `wrongAnswer`    | Fallback            | Returns a default message for irrelevant queries.                  |
-
-### 3. **Graph Flow**
+The agent is a LangGraph state machine with the following flow:
 
 ```
 START
-  ↓
-relevancyCheck ──┬── True → ChunkRetrieval → chatbot → END
-                  └── False → wrongAnswer → END
+  │
+  ▼
+relevancyCheck ──(not relevant)──► wrongAnswer ──► END
+  │
+  (relevant)
+  ▼
+ChunkRetrieval ──► chatbot ──► END
 ```
 
----
+- **relevancyCheck** — asks an LLM whether the question relates to the known documents (e.g. *monopoly*, *chess*).
+- **ChunkRetrieval** — runs a similarity search against the Chroma vector store.
+- **chatbot** — answers the question using the retrieved chunks as context.
+- **wrongAnswer** — returns a canned "not relevant" reply when the question is off-topic.
 
-## 🧩 Key Components
+Embeddings are generated locally with `sentence-transformers/all-MiniLM-L6-v2` (HuggingFace), and answers are generated with OpenAI's `gpt-4o-mini`.
 
-### 🗃️ Chroma Vector Store
+## Setup
 
-Stores and retrieves text embeddings for document chunks.
-All data persists in the local directory `chroma_db/`.
+1. **Clone and enter the repo**
 
-### 🧠 Models Used
+   ```bash
+   git clone <repo-url>
+   cd RAG-using-langGraph
+   ```
 
-* **Embeddings:** `sentence-transformers/all-MiniLM-L6-v2`
-* **LLM:** `gpt-4o-mini` (via `ChatOpenAI`)
+2. **Create a virtual environment and install dependencies**
 
-### 🧱 Frameworks & Libraries
+   ```bash
+   python -m venv .venv
+   .venv\Scripts\activate      # Windows (PowerShell)
+   # source .venv/bin/activate # macOS / Linux
+   pip install -r requirements.txt
+   ```
 
-* `langchain`
-* `langgraph`
-* `chromadb`
-* `langchain_openai`
-* `langchain_huggingface`
-* `dotenv`
+3. **Add your OpenAI API key** in a `.env` file at the project root:
 
----
+   ```
+   OPENAI_API_KEY=sk-...
+   ```
 
-## 🧰 How to Run
+4. **Add source documents** — place the PDFs you want to query in a `docs/` folder:
 
-### 1. **Install Dependencies**
+   ```
+   docs/
+     monopoly.pdf
+     chess.pdf
+   ```
 
-```bash
-pip install langchain langgraph langchain-openai langchain-huggingface chromadb python-dotenv
-```
+## Usage
 
-### 2. **Set up Environment Variables**
-
-Create a `.env` file with your OpenAI API key:
-
-```bash
-OPENAI_API_KEY=your_api_key_here
-```
-
-### 3. **Add Documents**
-
-Place all `.pdf` files inside a folder named `docs/`.
-
-### 4. **Run the Script**
+Run the script. It will (re)build the index from `docs/` and then run a sample query:
 
 ```bash
 python agentic_rag.py
 ```
 
-This will:
+The vector store is persisted to a local `chroma_db/` directory, so subsequent runs reuse the index. To change the question, edit the `agentic_rag.invoke(...)` call in `build_graph()`.
 
-* Create a vector index (`indexMaker`)
-* Build and run the graph (`build_graph`)
-* Print the LLM’s answer to a sample query
+## Project structure
 
----
-
-## 🧠 Example Output
-
-```bash
-how much money do you start with in monopoly?
-
-> The starting amount in Monopoly is $1500, distributed as follows: two $500s, two $100s, two $50s, six $20s, five $10s, five $5s, and five $1s.
+```
+agentic_rag.py     # indexing + LangGraph agent
+requirements.txt   # Python dependencies
+.gitignore
 ```
 
----
+## Notes
 
-## 🔮 Future Improvements ideas if anyone wants to contribute
-
-* Integrate **multi-format loaders** (e.g., `.txt`, `.docx`).
-* Add **dynamic document categories** for relevance checks.
-* Implement **feedback loops** for self-correcting retrieval.
-* Add **frontend interface** (e.g., Streamlit or FastAPI).
-
----
-
-## 🧑‍💻 Author
-
-Developed as a research prototype demonstrating **Agentic RAG pipelines** using **LangGraph** and **ChromaDB**.
-
----
+- `indexMaker()` upserts chunks keyed by a SHA-512 hash of their content, so re-running won't create duplicates.
+- The list of known document topics in `relevancyCheck` is currently hard-coded (`["monopoly", "chess"]`) — update it to match your own documents.

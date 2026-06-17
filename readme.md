@@ -1,129 +1,92 @@
+# PDF querying Faiss
 
-# 🧠 Agentic RAG — Automated Retrieval-Augmented Generation using LangGraph
+## Overview
 
-This project implements an **Agentic Retrieval-Augmented Generation (RAG)** pipeline using **LangGraph**, **LangChain**, **ChromaDB**, and **OpenAI APIs**.
-It automates document retrieval, relevance checking, and response generation through a dynamic graph of reasoning nodes.
+An **agentic RAG** (Retrieval-Augmented Generation) system that lets you ask
+natural-language questions about your own PDF documents. PDFs dropped into the
+`docs/` folder are chunked, embedded locally, and stored in a persistent vector
+database. At query time a [LangGraph](https://langchain-ai.github.io/langgraph/)
+state machine first decides whether the question is relevant to the indexed
+material, and only then retrieves the most similar chunks and asks an LLM
+(`gpt-4o-mini`) to answer using that context. Irrelevant questions are rejected
+early, so the model never hallucinates an answer from documents it doesn't have.
 
----
+Key ideas:
 
-## 🚀 Overview
+- **Local embeddings** via `sentence-transformers/all-MiniLM-L6-v2` — no API cost for indexing.
+- **Relevancy gate** — an LLM check short-circuits off-topic queries before retrieval.
+- **Graph-based control flow** — each step (relevancy → retrieval → answer) is an explicit node.
 
-The system works as an **intelligent document question-answering agent**.
-It indexes local PDF documents, determines whether a query is relevant to the dataset, retrieves matching text chunks from a vector database, and generates an LLM-based answer.
-
-The workflow is built using a **graph-based architecture** (via `StateGraph` from `langgraph`), with nodes representing distinct steps in the RAG pipeline.
-
----
-
-## ⚙️ Workflow Summary
-
-### 1. **Index Creation**
-
-* The function `indexMaker()` loads all PDFs from the `docs/` directory.
-* Each document is split into smaller text chunks using `RecursiveCharacterTextSplitter`.
-* Embeddings are generated via the **HuggingFace model** `sentence-transformers/all-MiniLM-L6-v2`.
-* The chunks are stored in a persistent **ChromaDB** collection.
-
-### 2. **Graph Nodes**
-
-The graph includes the following key nodes:
-
-| Node             | Function            | Description                                                        |
-| ---------------- | ------------------- | ------------------------------------------------------------------ |
-| `relevancyCheck` | LLM-based filter    | Determines if a user query relates to available documents.         |
-| `ChunkRetrieval` | Vector store search | Retrieves the most relevant text chunks using semantic similarity. |
-| `chatbot`        | LLM response        | Generates a contextual answer based on retrieved chunks.           |
-| `wrongAnswer`    | Fallback            | Returns a default message for irrelevant queries.                  |
-
-### 3. **Graph Flow**
+## Architecture
 
 ```
-START
-  ↓
-relevancyCheck ──┬── True → ChunkRetrieval → chatbot → END
-                  └── False → wrongAnswer → END
+                        +------------------------+
+   PDFs in docs/ ---->  |   indexMaker()         |
+                        |  load -> split (1200/  |
+                        |  200) -> embed -> upsert|
+                        +-----------+------------+
+                                    |
+                                    v
+                          +-------------------+
+                          |  Vector store     |
+                          |  (persistent DB)  |
+                          +---------+---------+
+                                    ^
+                                    | similarity_search
+                                    |
+   user question                    |
+        |                            |
+        v                            |
+  +-----------+      No      +---------------+
+  |  START    |---> relevancyCheck --------->| wrongAnswer |--> END
+  +-----------+              |               +---------------+
+                       Yes   |
+                             v
+                     +----------------+
+                     | ChunkRetrieval |
+                     +-------+--------+
+                             |
+                             v
+                     +----------------+
+                     |   chatbot      |  (gpt-4o-mini answers
+                     |   (LLM answer) |   from retrieved chunks)
+                     +-------+--------+
+                             |
+                             v
+                            END
 ```
 
----
+## Tech Stack
 
-## 🧩 Key Components
+| Layer            | Technology                                            | Purpose                                       |
+| ---------------- | ----------------------------------------------------- | --------------------------------------------- |
+| Orchestration    | LangGraph                                             | State-machine control flow for the RAG agent  |
+| Framework        | LangChain                                             | Loaders, splitters, vector-store integration  |
+| LLM              | OpenAI `gpt-4o-mini` (via `langchain-openai`)         | Relevancy check + answer generation           |
+| Embeddings       | `sentence-transformers/all-MiniLM-L6-v2` (HuggingFace)| Local document & query embeddings             |
+| Vector store     | ChromaDB (persistent client)                          | Chunk storage and similarity search           |
+| Document loading | LangChain `DirectoryLoader`                           | Reads PDFs from `docs/`                        |
+| Config           | python-dotenv                                         | Loads `OPENAI_API_KEY` from `.env`            |
+| Language         | Python 3                                              | —                                             |
 
-### 🗃️ Chroma Vector Store
-
-Stores and retrieves text embeddings for document chunks.
-All data persists in the local directory `chroma_db/`.
-
-### 🧠 Models Used
-
-* **Embeddings:** `sentence-transformers/all-MiniLM-L6-v2`
-* **LLM:** `gpt-4o-mini` (via `ChatOpenAI`)
-
-### 🧱 Frameworks & Libraries
-
-* `langchain`
-* `langgraph`
-* `chromadb`
-* `langchain_openai`
-* `langchain_huggingface`
-* `dotenv`
-
----
-
-## 🧰 How to Run
-
-### 1. **Install Dependencies**
+## Getting Started
 
 ```bash
-pip install langchain langgraph langchain-openai langchain-huggingface chromadb python-dotenv
-```
+# 1. Install dependencies
+pip install -r requirements.txt
 
-### 2. **Set up Environment Variables**
+# 2. Add your OpenAI key to a .env file
+#    OPENAI_API_KEY=sk-...
 
-Create a `.env` file with your OpenAI API key:
+# 3. Drop PDF files into a docs/ folder
 
-```bash
-OPENAI_API_KEY=your_api_key_here
-```
-
-### 3. **Add Documents**
-
-Place all `.pdf` files inside a folder named `docs/`.
-
-### 4. **Run the Script**
-
-```bash
+# 4. Build the index and run a sample query
 python agentic_rag.py
 ```
 
-This will:
+The first run calls `indexMaker()` to build the vector store, then `build_graph()`
+compiles the LangGraph and runs an example query.
 
-* Create a vector index (`indexMaker`)
-* Build and run the graph (`build_graph`)
-* Print the LLM’s answer to a sample query
+## Tags
 
----
-
-## 🧠 Example Output
-
-```bash
-how much money do you start with in monopoly?
-
-> The starting amount in Monopoly is $1500, distributed as follows: two $500s, two $100s, two $50s, six $20s, five $10s, five $5s, and five $1s.
-```
-
----
-
-## 🔮 Future Improvements ideas if anyone wants to contribute
-
-* Integrate **multi-format loaders** (e.g., `.txt`, `.docx`).
-* Add **dynamic document categories** for relevance checks.
-* Implement **feedback loops** for self-correcting retrieval.
-* Add **frontend interface** (e.g., Streamlit or FastAPI).
-
----
-
-## 🧑‍💻 Author
-
-Developed as a research prototype demonstrating **Agentic RAG pipelines** using **LangGraph** and **ChromaDB**.
-
----
+`RAG` `LangGraph` `GPT` `LangChain` `ChromaDB` `embeddings` `vector-search` `PDF` `gpt-4o-mini` `HuggingFace`
